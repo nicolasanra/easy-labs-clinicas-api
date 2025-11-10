@@ -55,6 +55,17 @@ app.get('/disponibilidad', async (req, res) => {
   res.json(data);
 });
 
+// Agregar disponibilidad manualmente
+app.post('/disponibilidad', async (req, res) => {
+  const entries = req.body;
+  const { data, error } = await supabase
+    .from('disponibilidad')
+    .insert(entries)
+    .select();
+  if (error) return res.status(400).json({ error });
+  res.json(data);
+});
+
 // 4) Crear turno (checks de disponibilidad and create client)
 app.post('/turnos/crear', async (req, res) => {
   const { clinica_id, nombre, telefono, email, fecha, hora } = req.body;
