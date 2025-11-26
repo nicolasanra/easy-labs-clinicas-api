@@ -1,6 +1,12 @@
 import express from "express";
 import cors from "cors";
 import { createClient } from "@supabase/supabase-js";
+import { resolveTenant } from './middleware/resolveTenant.js';
+
+// proteger solo rutas que requieren tenant
+app.use('/turnos', resolveTenant);
+app.use('/clientes', resolveTenant);
+app.use('/disponibilidad', resolveTenant); // si corresponde
 
 const app = express();
 app.use(cors());
