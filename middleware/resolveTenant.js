@@ -1,47 +1,69 @@
-/**
- * middleware/resolveTenant.js
- * Express middleware to resolve tenant identifier from request.
- * Tries X-Tenant-Id header, query param `tenant`, then subdomain (foo.example.com -> foo).
- * If no tenant found, uses options.defaultTenant if provided, otherwise returns 400 error.
- */
+// middleware/resolveTenant.js
 
-function resolveTenant(options = {}) {
-  return function (req, res, next) {
-    try {
-      // 1. Header
-      const headerTenant = req.headers['x-tenant-id'] || req.get && req.get('x-tenant-id');
-      // 2. Query param
-      let tenant = headerTenant || (req.query && req.query.tenant) || null;
+import { createClient } from '@supabase/supabase-js';
 
-      // 3. Subdomain (host)
-      if (!tenant && req.headers && req.headers.host) {
-        const host = req.headers.host.split(':')[0]; // remove port
-        const parts = host.split('.');
-        // assume subdomain exists when there are more than 2 parts
-        if (parts.length > 2 && parts[0] !== 'www') {
-          tenant = parts[0];
-        }
-      }
+// Solo usar service_role en backend
+const supabaseAdmin = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE
+);
 
-      // 4. Default fallback
-      if (!tenant && options.defaultTenant) {
-        tenant = options.defaultTenant;
-      }
+export async function resolveTenant(req, res, next) {
+  try {
+    // 1) Datos del webhook Evolution / n8n / API
+    const evoApiKey =
+      req.headers['x-evo-apikey'] ||
+      req.body?.apikey ||
+      req.query?.apikey ||
+      '';
 
-      if (!tenant) {
-        const err = new Error('Tenant no resuelto');
-        err.status = 400; // Bad Request
-        return next(err);
-      }
+    // Este es el número de WhatsApp de la clínica
+    const clinicSender =
+      req.headers['x-clinic-number'] ||
+      req.body?.sender ||
+      req.body?.senderNumber ||
+      '';
 
-      // attach to request for downstream handlers
-      req.tenantId = tenant;
+    let clinica = null;
 
-      next();
-    } catch (err) {
-      next(err);
+    // 2) Buscar clínica por telefono_whatsapp (sender)
+    if (clinicSender) {
+      const { data, error } = await supabaseAdmin
+        .from('clinicas')
+        .select('id, nombre, telefono_whatsapp, evo_apikey')
+        .eq('telefono_whatsapp', clinicSender)
+        .single();
+
+      if (!error && data) clinica = data;
     }
-  };
-}
 
-module.exports = resolveTenant;
+    // 3) Fallback: buscar por apiKey
+    if (!clinica && evoApiKey) {
+      const { data } = await supabaseAdmin
+        .from('clinicas')
+        .select('id, nombre, telefono_whatsapp, evo_apikey')
+        .eq('evo_apikey', evoApiKey)
+        .single();
+
+      if (data) clinica = data;
+    }
+
+    // 4) Error si no se encuentra tenant
+    if (!clinica) {
+      return res.status(401).json({
+        error:
+          'Tenant no encontrado (sender o apiKey inválidos)'
+      });
+    }
+
+    // 5) Guardar en la request
+    req.clinica = clinica;
+
+    next();
+  } catch (err) {
+    console.error('Error en resolveTenant:', err);
+    return res.status(500).json({
+      error: 'Error resolviendo tenant'
+    });
+  }
+}
